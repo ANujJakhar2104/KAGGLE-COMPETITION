@@ -1,0 +1,738 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "edb261aa",
+   "metadata": {
+    "papermill": {
+     "duration": 0.004343,
+     "end_time": "2026-01-09T00:07:37.751542",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:37.747199",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "## uploaing modules"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "90925db4",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:37.760020Z",
+     "iopub.status.busy": "2026-01-09T00:07:37.759432Z",
+     "iopub.status.idle": "2026-01-09T00:07:41.128631Z",
+     "shell.execute_reply": "2026-01-09T00:07:41.127632Z"
+    },
+    "papermill": {
+     "duration": 3.375793,
+     "end_time": "2026-01-09T00:07:41.130946",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:37.755153",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "import os\n",
+    "import cv2\n",
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "from tqdm import tqdm\n",
+    "from scipy.signal import savgol_filter"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "f2f33a60",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:41.138537Z",
+     "iopub.status.busy": "2026-01-09T00:07:41.138080Z",
+     "iopub.status.idle": "2026-01-09T00:07:41.142765Z",
+     "shell.execute_reply": "2026-01-09T00:07:41.141927Z"
+    },
+    "papermill": {
+     "duration": 0.010775,
+     "end_time": "2026-01-09T00:07:41.144667",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.133892",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "DATA_ROOT = \"/kaggle/input/physionet-ecg-image-digitization\"\n",
+    "TEST_DIR = f\"{DATA_ROOT}/test\""
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "9480f883",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:41.152889Z",
+     "iopub.status.busy": "2026-01-09T00:07:41.151794Z",
+     "iopub.status.idle": "2026-01-09T00:07:41.156746Z",
+     "shell.execute_reply": "2026-01-09T00:07:41.155641Z"
+    },
+    "papermill": {
+     "duration": 0.011385,
+     "end_time": "2026-01-09T00:07:41.158934",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.147549",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "LEADS = [\n",
+    "    \"I\",\"II\",\"III\",\"aVR\",\"aVL\",\"aVF\",\n",
+    "    \"V1\",\"V2\",\"V3\",\"V4\",\"V5\",\"V6\"\n",
+    "]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "04c6a237",
+   "metadata": {
+    "papermill": {
+     "duration": 0.002949,
+     "end_time": "2026-01-09T00:07:41.164824",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.161875",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "## processing images"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "815f9536",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:41.173322Z",
+     "iopub.status.busy": "2026-01-09T00:07:41.172603Z",
+     "iopub.status.idle": "2026-01-09T00:07:41.179398Z",
+     "shell.execute_reply": "2026-01-09T00:07:41.178510Z"
+    },
+    "papermill": {
+     "duration": 0.013836,
+     "end_time": "2026-01-09T00:07:41.181453",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.167617",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "def preprocess_image(img):\n",
+    "    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)\n",
+    "\n",
+    "    # Remove grid (same as before)\n",
+    "    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 25))\n",
+    "    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))\n",
+    "\n",
+    "    no_vertical = cv2.morphologyEx(gray, cv2.MORPH_OPEN, vertical_kernel)\n",
+    "    no_horizontal = cv2.morphologyEx(gray, cv2.MORPH_OPEN, horizontal_kernel)\n",
+    "\n",
+    "    grid_removed = cv2.subtract(gray, no_vertical)\n",
+    "    grid_removed = cv2.subtract(grid_removed, no_horizontal)\n",
+    "\n",
+    "    # Binary\n",
+    "    bw = cv2.adaptiveThreshold(\n",
+    "        grid_removed, 255,\n",
+    "        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,\n",
+    "        cv2.THRESH_BINARY_INV,\n",
+    "        51, 5\n",
+    "    )\n",
+    "\n",
+    "   \n",
+    "    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))\n",
+    "    bw = cv2.erode(bw, kernel, iterations=1)\n",
+    "\n",
+    "    return bw"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "4794b578",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:41.188859Z",
+     "iopub.status.busy": "2026-01-09T00:07:41.188508Z",
+     "iopub.status.idle": "2026-01-09T00:07:41.198735Z",
+     "shell.execute_reply": "2026-01-09T00:07:41.197911Z"
+    },
+    "papermill": {
+     "duration": 0.016223,
+     "end_time": "2026-01-09T00:07:41.200646",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.184423",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "def extract_waveform(binary_img):\n",
+    "    h, w = binary_img.shape\n",
+    "\n",
+    "    # Find connected components\n",
+    "    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(\n",
+    "        binary_img, connectivity=8\n",
+    "    )\n",
+    "\n",
+    "    # Ignore background, keep largest component\n",
+    "    if num_labels <= 1:\n",
+    "        return np.zeros(w, dtype=np.float32)\n",
+    "\n",
+    "    largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])\n",
+    "    mask = (labels == largest).astype(np.uint8) * 255\n",
+    "\n",
+    "    signal = np.zeros(w, dtype=np.float32)\n",
+    "\n",
+    "    for x in range(w):\n",
+    "        ys = np.where(mask[:, x] > 0)[0]\n",
+    "        if len(ys) > 0:\n",
+    "            # center of ridge\n",
+    "            signal[x] = np.mean(ys)\n",
+    "        else:\n",
+    "            signal[x] = np.nan\n",
+    "\n",
+    "    # Interpolate gaps\n",
+    "    nans = np.isnan(signal)\n",
+    "    if np.any(~nans):\n",
+    "        signal[nans] = np.interp(\n",
+    "            np.flatnonzero(nans),\n",
+    "            np.flatnonzero(~nans),\n",
+    "            signal[~nans]\n",
+    "        )\n",
+    "    else:\n",
+    "        signal[:] = 0.0\n",
+    "\n",
+    "    # Flip y-axis\n",
+    "    signal = h - signal\n",
+    "\n",
+    "    # Normalize (critical for SNR)\n",
+    "    signal -= np.mean(signal)\n",
+    "    std = np.std(signal)\n",
+    "    if std > 1e-6:\n",
+    "        signal /= std\n",
+    "\n",
+    "    # Downsample → reduce jitter\n",
+    "    target_len = max(500, len(signal) // 4)\n",
+    "    signal = np.interp(\n",
+    "        np.linspace(0, len(signal)-1, target_len),\n",
+    "        np.arange(len(signal)),\n",
+    "        signal\n",
+    "    )\n",
+    "\n",
+    "    # Smooth AFTER downsampling\n",
+    "    if len(signal) > 101:\n",
+    "        signal = savgol_filter(signal, 101, 3)\n",
+    "\n",
+    "    return signal"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "d817d9f0",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:41.207900Z",
+     "iopub.status.busy": "2026-01-09T00:07:41.207546Z",
+     "iopub.status.idle": "2026-01-09T00:07:41.213388Z",
+     "shell.execute_reply": "2026-01-09T00:07:41.212586Z"
+    },
+    "papermill": {
+     "duration": 0.011964,
+     "end_time": "2026-01-09T00:07:41.215524",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.203560",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "def split_into_leads(img):\n",
+    "    h, w, _ = img.shape\n",
+    "    lead_h = h // 12\n",
+    "    leads = []\n",
+    "\n",
+    "    for i in range(12):\n",
+    "        y1 = int(i * lead_h + 0.1 * lead_h)\n",
+    "        y2 = int((i + 1) * lead_h - 0.1 * lead_h)\n",
+    "        leads.append(img[y1:y2, :])\n",
+    "\n",
+    "    return leads"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "cc4cff78",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:41.222943Z",
+     "iopub.status.busy": "2026-01-09T00:07:41.222578Z",
+     "iopub.status.idle": "2026-01-09T00:07:41.227574Z",
+     "shell.execute_reply": "2026-01-09T00:07:41.226658Z"
+    },
+    "papermill": {
+     "duration": 0.010847,
+     "end_time": "2026-01-09T00:07:41.229318",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.218471",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "def process_ecg_image(img):\n",
+    "    lead_imgs = split_into_leads(img)\n",
+    "    signals = []\n",
+    "\n",
+    "    for lead_img in lead_imgs:\n",
+    "        bw = preprocess_image(lead_img)\n",
+    "        sig = extract_waveform(bw)\n",
+    "        signals.append(sig)\n",
+    "\n",
+    "    return signals"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "93031ecf",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:41.237248Z",
+     "iopub.status.busy": "2026-01-09T00:07:41.236298Z",
+     "iopub.status.idle": "2026-01-09T00:07:41.691284Z",
+     "shell.execute_reply": "2026-01-09T00:07:41.690252Z"
+    },
+    "papermill": {
+     "duration": 0.461181,
+     "end_time": "2026-01-09T00:07:41.693416",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.232235",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Expected rows: 75000\n"
+     ]
+    },
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>id</th>\n",
+       "      <th>value</th>\n",
+       "      <th>record</th>\n",
+       "      <th>time</th>\n",
+       "      <th>lead</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>1053922973_0_I</td>\n",
+       "      <td>0</td>\n",
+       "      <td>1053922973</td>\n",
+       "      <td>0</td>\n",
+       "      <td>I</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1053922973_1_I</td>\n",
+       "      <td>0</td>\n",
+       "      <td>1053922973</td>\n",
+       "      <td>1</td>\n",
+       "      <td>I</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>1053922973_2_I</td>\n",
+       "      <td>0</td>\n",
+       "      <td>1053922973</td>\n",
+       "      <td>2</td>\n",
+       "      <td>I</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>1053922973_3_I</td>\n",
+       "      <td>0</td>\n",
+       "      <td>1053922973</td>\n",
+       "      <td>3</td>\n",
+       "      <td>I</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>1053922973_4_I</td>\n",
+       "      <td>0</td>\n",
+       "      <td>1053922973</td>\n",
+       "      <td>4</td>\n",
+       "      <td>I</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "               id  value      record  time lead\n",
+       "0  1053922973_0_I      0  1053922973     0    I\n",
+       "1  1053922973_1_I      0  1053922973     1    I\n",
+       "2  1053922973_2_I      0  1053922973     2    I\n",
+       "3  1053922973_3_I      0  1053922973     3    I\n",
+       "4  1053922973_4_I      0  1053922973     4    I"
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "sample_sub = pd.read_parquet(\n",
+    "    f\"{DATA_ROOT}/sample_submission.parquet\"\n",
+    ")\n",
+    "\n",
+    "ids = sample_sub[\"id\"].str.split(\"_\", expand=True)\n",
+    "sample_sub[\"record\"] = ids[0]\n",
+    "sample_sub[\"time\"] = ids[1].astype(int)\n",
+    "sample_sub[\"lead\"] = ids[2]\n",
+    "\n",
+    "print(\"Expected rows:\", len(sample_sub))\n",
+    "sample_sub.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "id": "8246a2e0",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:41.701282Z",
+     "iopub.status.busy": "2026-01-09T00:07:41.700961Z",
+     "iopub.status.idle": "2026-01-09T00:07:41.710458Z",
+     "shell.execute_reply": "2026-01-09T00:07:41.709088Z"
+    },
+    "papermill": {
+     "duration": 0.015737,
+     "end_time": "2026-01-09T00:07:41.712366",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.696629",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Test images found: 2\n"
+     ]
+    }
+   ],
+   "source": [
+    "record_to_image = {}\n",
+    "\n",
+    "for fname in os.listdir(TEST_DIR):\n",
+    "    rid = os.path.splitext(fname)[0]\n",
+    "    record_to_image[rid] = os.path.join(TEST_DIR, fname)\n",
+    "\n",
+    "print(\"Test images found:\", len(record_to_image))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "id": "01a65818",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:41.720531Z",
+     "iopub.status.busy": "2026-01-09T00:07:41.720144Z",
+     "iopub.status.idle": "2026-01-09T00:07:45.887653Z",
+     "shell.execute_reply": "2026-01-09T00:07:45.886591Z"
+    },
+    "papermill": {
+     "duration": 4.17374,
+     "end_time": "2026-01-09T00:07:45.889440",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:41.715700",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "100%|██████████| 2/2 [00:04<00:00,  2.06s/it]\n"
+     ]
+    }
+   ],
+   "source": [
+    "rows = []\n",
+    "lead_map = {name: i for i, name in enumerate(LEADS)}\n",
+    "\n",
+    "for record_id, group in tqdm(sample_sub.groupby(\"record\")):\n",
+    "    if record_id not in record_to_image:\n",
+    "        # Defensive fallback\n",
+    "        for _, row in group.iterrows():\n",
+    "            rows.append({\"id\": row[\"id\"], \"value\": 0.0})\n",
+    "        continue\n",
+    "\n",
+    "    img = cv2.imread(record_to_image[record_id])\n",
+    "\n",
+    "    if img is None:\n",
+    "        # If image fails to load, output zeros\n",
+    "        for _, row in group.iterrows():\n",
+    "            rows.append({\"id\": row[\"id\"], \"value\": 0.0})\n",
+    "        continue\n",
+    "\n",
+    "    signals = process_ecg_image(img)\n",
+    "\n",
+    "    for _, row in group.iterrows():\n",
+    "        t = row[\"time\"]\n",
+    "        lead_idx = lead_map[row[\"lead\"]]\n",
+    "        sig = signals[lead_idx]\n",
+    "\n",
+    "        val = sig[t] if t < len(sig) else sig[-1]\n",
+    "\n",
+    "        rows.append({\n",
+    "            \"id\": row[\"id\"],\n",
+    "            \"value\": float(val)\n",
+    "        })"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "5e5caa52",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:45.898014Z",
+     "iopub.status.busy": "2026-01-09T00:07:45.897513Z",
+     "iopub.status.idle": "2026-01-09T00:07:46.106819Z",
+     "shell.execute_reply": "2026-01-09T00:07:46.105735Z"
+    },
+    "papermill": {
+     "duration": 0.215717,
+     "end_time": "2026-01-09T00:07:46.108640",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:45.892923",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Submission rows: 75000\n",
+      "Expected rows: 75000\n"
+     ]
+    }
+   ],
+   "source": [
+    "submission = pd.DataFrame(rows)\n",
+    "\n",
+    "# Remove NaNs / infs (prevents scoring error)\n",
+    "submission[\"value\"] = submission[\"value\"].replace([np.inf, -np.inf], 0.0)\n",
+    "submission[\"value\"] = submission[\"value\"].fillna(0.0)\n",
+    "\n",
+    "submission.to_csv(\"submission.csv\", index=False)\n",
+    "\n",
+    "print(\"Submission rows:\", len(submission))\n",
+    "print(\"Expected rows:\", len(sample_sub))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "id": "7467ee5d",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-09T00:07:46.117475Z",
+     "iopub.status.busy": "2026-01-09T00:07:46.116899Z",
+     "iopub.status.idle": "2026-01-09T00:07:46.176050Z",
+     "shell.execute_reply": "2026-01-09T00:07:46.174874Z"
+    },
+    "papermill": {
+     "duration": 0.065663,
+     "end_time": "2026-01-09T00:07:46.177867",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:46.112204",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Missing IDs: 0\n",
+      "Extra IDs: 0\n",
+      "NaNs: 0\n",
+      "Infs: 0\n"
+     ]
+    }
+   ],
+   "source": [
+    "missing = set(sample_sub[\"id\"]) - set(submission[\"id\"])\n",
+    "extra = set(submission[\"id\"]) - set(sample_sub[\"id\"])\n",
+    "\n",
+    "print(\"Missing IDs:\", len(missing))\n",
+    "print(\"Extra IDs:\", len(extra))\n",
+    "print(\"NaNs:\", submission[\"value\"].isna().sum())\n",
+    "print(\"Infs:\", np.isinf(submission[\"value\"]).sum())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1914e1d4",
+   "metadata": {
+    "papermill": {
+     "duration": 0.003678,
+     "end_time": "2026-01-09T00:07:46.185450",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:46.181772",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "## upvote"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e13e9a89",
+   "metadata": {
+    "papermill": {
+     "duration": 0.003242,
+     "end_time": "2026-01-09T00:07:46.192013",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:46.188771",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d627f623",
+   "metadata": {
+    "papermill": {
+     "duration": 0.003246,
+     "end_time": "2026-01-09T00:07:46.198568",
+     "exception": false,
+     "start_time": "2026-01-09T00:07:46.195322",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kaggle": {
+   "accelerator": "none",
+   "dataSources": [
+    {
+     "databundleVersionId": 14096757,
+     "sourceId": 97984,
+     "sourceType": "competition"
+    }
+   ],
+   "dockerImageVersionId": 31239,
+   "isGpuEnabled": false,
+   "isInternetEnabled": true,
+   "language": "python",
+   "sourceType": "notebook"
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.12.12"
+  },
+  "papermill": {
+   "default_parameters": {},
+   "duration": 12.584627,
+   "end_time": "2026-01-09T00:07:46.923455",
+   "environment_variables": {},
+   "exception": null,
+   "input_path": "__notebook__.ipynb",
+   "output_path": "__notebook__.ipynb",
+   "parameters": {},
+   "start_time": "2026-01-09T00:07:34.338828",
+   "version": "2.6.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
