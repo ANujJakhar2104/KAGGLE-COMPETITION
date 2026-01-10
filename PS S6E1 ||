@@ -1,0 +1,768 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "3304c7da",
+   "metadata": {
+    "papermill": {
+     "duration": 0.004338,
+     "end_time": "2026-01-10T02:40:48.850422",
+     "exception": false,
+     "start_time": "2026-01-10T02:40:48.846084",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "### modules "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "7ac29b92",
+   "metadata": {
+    "_cell_guid": "b1076dfc-b9ad-4769-8c92-a6c4dae69d19",
+    "_uuid": "8f2839f25d086af736a60e9eeb907d3b93b6e0e5",
+    "execution": {
+     "iopub.execute_input": "2026-01-10T02:40:48.858417Z",
+     "iopub.status.busy": "2026-01-10T02:40:48.858096Z",
+     "iopub.status.idle": "2026-01-10T02:40:52.133470Z",
+     "shell.execute_reply": "2026-01-10T02:40:52.132416Z"
+    },
+    "papermill": {
+     "duration": 3.282651,
+     "end_time": "2026-01-10T02:40:52.136082",
+     "exception": false,
+     "start_time": "2026-01-10T02:40:48.853431",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Setup complete!\n"
+     ]
+    }
+   ],
+   "source": [
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "from sklearn.model_selection import KFold\n",
+    "from sklearn.preprocessing import LabelEncoder\n",
+    "from sklearn.linear_model import RidgeCV\n",
+    "from sklearn.metrics import mean_squared_error\n",
+    "import xgboost as xgb\n",
+    "import warnings\n",
+    "warnings.filterwarnings('ignore')\n",
+    "\n",
+    "def root_mean_squared_error(y_true, y_pred):\n",
+    "    return np.sqrt(mean_squared_error(y_true, y_pred))\n",
+    "\n",
+    "# Configuration\n",
+    "SEED = 42\n",
+    "FOLDS = 10\n",
+    "TARGET = 'exam_score'\n",
+    "np.random.seed(SEED)\n",
+    "print('Setup complete!')\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "d9f0c143",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-10T02:40:52.143248Z",
+     "iopub.status.busy": "2026-01-10T02:40:52.142828Z",
+     "iopub.status.idle": "2026-01-10T02:40:53.777349Z",
+     "shell.execute_reply": "2026-01-10T02:40:53.776297Z"
+    },
+    "papermill": {
+     "duration": 1.640212,
+     "end_time": "2026-01-10T02:40:53.779197",
+     "exception": false,
+     "start_time": "2026-01-10T02:40:52.138985",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Train: 630,000 | Test: 270,000 | Original: 20,000\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Load data\n",
+    "train_df = pd.read_csv('/kaggle/input/playground-series-s6e1/train.csv')\n",
+    "test_df = pd.read_csv('/kaggle/input/playground-series-s6e1/test.csv')\n",
+    "original_df = pd.read_csv('/kaggle/input/exam-score-prediction-dataset/Exam_Score_Prediction.csv')\n",
+    "\n",
+    "print(f'Train: {len(train_df):,} | Test: {len(test_df):,} | Original: {len(original_df):,}')\n",
+    "\n",
+    "base_features = [col for col in train_df.columns if col not in [TARGET, 'id']]\n",
+    "CATS = train_df.select_dtypes('object').columns.to_list()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d49eace9",
+   "metadata": {
+    "papermill": {
+     "duration": 0.002626,
+     "end_time": "2026-01-10T02:40:53.784621",
+     "exception": false,
+     "start_time": "2026-01-10T02:40:53.781995",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "### feature engeering"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "e5075ce0",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-10T02:40:53.791801Z",
+     "iopub.status.busy": "2026-01-10T02:40:53.791007Z",
+     "iopub.status.idle": "2026-01-10T02:40:55.306364Z",
+     "shell.execute_reply": "2026-01-10T02:40:55.305382Z"
+    },
+    "papermill": {
+     "duration": 1.521092,
+     "end_time": "2026-01-10T02:40:55.308248",
+     "exception": false,
+     "start_time": "2026-01-10T02:40:53.787156",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Engineering features...\n",
+      "Features: 35\n"
+     ]
+    }
+   ],
+   "source": [
+    "def preprocess(df):\n",
+    "    '''Feature engineering matching top notebooks.'''\n",
+    "    data = df.copy()\n",
+    "    eps = 1e-5\n",
+    "\n",
+    "    # Polynomial features\n",
+    "    data['study_hours_squared'] = data['study_hours'] ** 2\n",
+    "    data['study_hours_cubed'] = data['study_hours'] ** 3\n",
+    "    data['class_attendance_squared'] = data['class_attendance'] ** 2\n",
+    "    data['sleep_hours_squared'] = data['sleep_hours'] ** 2\n",
+    "    data['age_squared'] = data['age'] ** 2\n",
+    "\n",
+    "    # Log/sqrt transforms\n",
+    "    data['log_study_hours'] = np.log1p(data['study_hours'])\n",
+    "    data['log_class_attendance'] = np.log1p(data['class_attendance'])\n",
+    "    data['log_sleep_hours'] = np.log1p(data['sleep_hours'])\n",
+    "    data['sqrt_study_hours'] = np.sqrt(data['study_hours'])\n",
+    "    data['sqrt_class_attendance'] = np.sqrt(data['class_attendance'])\n",
+    "\n",
+    "    # Interaction features\n",
+    "    data['study_hours_times_attendance'] = data['study_hours'] * data['class_attendance']\n",
+    "    data['study_hours_times_sleep'] = data['study_hours'] * data['sleep_hours']\n",
+    "    data['attendance_times_sleep'] = data['class_attendance'] * data['sleep_hours']\n",
+    "\n",
+    "    # Ratio features\n",
+    "    data['study_hours_over_sleep'] = data['study_hours'] / (data['sleep_hours'] + eps)\n",
+    "    data['attendance_over_sleep'] = data['class_attendance'] / (data['sleep_hours'] + eps)\n",
+    "\n",
+    "    # Ordinal encoding\n",
+    "    sleep_quality_map = {'poor': 0, 'average': 1, 'good': 2}\n",
+    "    facility_rating_map = {'low': 0, 'medium': 1, 'high': 2}\n",
+    "    exam_difficulty_map = {'easy': 0, 'medium': 1, 'hard': 2}\n",
+    "\n",
+    "    data['sleep_quality_numeric'] = data['sleep_quality'].map(sleep_quality_map).fillna(1).astype(int)\n",
+    "    data['facility_rating_numeric'] = data['facility_rating'].map(facility_rating_map).fillna(1).astype(int)\n",
+    "    data['exam_difficulty_numeric'] = data['exam_difficulty'].map(exam_difficulty_map).fillna(1).astype(int)\n",
+    "\n",
+    "    # Interaction with encoded categoricals\n",
+    "    data['study_hours_times_sleep_quality'] = data['study_hours'] * data['sleep_quality_numeric']\n",
+    "    data['attendance_times_facility'] = data['class_attendance'] * data['facility_rating_numeric']\n",
+    "    data['sleep_hours_times_difficulty'] = data['sleep_hours'] * data['exam_difficulty_numeric']\n",
+    "    data['age_times_study_hours'] = data['age'] * data['study_hours']\n",
+    "    data['age_times_attendance'] = data['age'] * data['class_attendance']\n",
+    "    # Efficiency feature\n",
+    "    data['efficiency'] = (data['study_hours'] * data['class_attendance']) / (data['sleep_hours'] + 1)\n",
+    "\n",
+    "    numeric_features = [\n",
+    "        'study_hours_squared', 'study_hours_cubed',\n",
+    "        'class_attendance_squared', 'sleep_hours_squared', 'age_squared',\n",
+    "        'log_study_hours', 'log_class_attendance', 'log_sleep_hours',\n",
+    "        'sqrt_study_hours', 'sqrt_class_attendance',\n",
+    "        'study_hours_times_attendance', 'study_hours_times_sleep',\n",
+    "        'attendance_times_sleep', 'study_hours_over_sleep',\n",
+    "        'attendance_over_sleep',\n",
+    "        'sleep_quality_numeric', 'facility_rating_numeric', 'exam_difficulty_numeric',\n",
+    "        'study_hours_times_sleep_quality', 'attendance_times_facility',\n",
+    "        'sleep_hours_times_difficulty', 'age_times_study_hours',\n",
+    "        'age_times_attendance', 'efficiency'\n",
+    "    ]\n",
+    "\n",
+    "    return data[base_features + numeric_features]\n",
+    "\n",
+    "# Apply preprocessing\n",
+    "print('Engineering features...')\n",
+    "X_raw = preprocess(train_df)\n",
+    "y = train_df[TARGET].reset_index(drop=True)\n",
+    "X_test_raw = preprocess(test_df)\n",
+    "X_orig_raw = preprocess(original_df)\n",
+    "y_orig = original_df[TARGET].reset_index(drop=True)\n",
+    "\n",
+    "# Combine all data\n",
+    "full_data = pd.concat([X_raw, X_test_raw, X_orig_raw], axis=0)\n",
+    "\n",
+    "numeric_cols = [\n",
+    "    'study_hours_squared', 'study_hours_cubed',\n",
+    "    'class_attendance_squared', 'sleep_hours_squared', 'age_squared',\n",
+    "    'log_study_hours', 'log_class_attendance', 'log_sleep_hours',\n",
+    "    'sqrt_study_hours', 'sqrt_class_attendance',\n",
+    "    'study_hours_times_attendance', 'study_hours_times_sleep',\n",
+    "    'attendance_times_sleep', 'study_hours_over_sleep',\n",
+    "    'attendance_over_sleep',\n",
+    "    'sleep_quality_numeric', 'facility_rating_numeric', 'exam_difficulty_numeric',\n",
+    "    'study_hours_times_sleep_quality', 'attendance_times_facility',\n",
+    "    'sleep_hours_times_difficulty', 'age_times_study_hours',\n",
+    "    'age_times_attendance', 'efficiency'\n",
+    "]\n",
+    "\n",
+    "for col in numeric_cols:\n",
+    "    full_data[col] = full_data[col].astype(float)\n",
+    "\n",
+    "X = full_data.iloc[:len(train_df)].copy()\n",
+    "X_test = full_data.iloc[len(train_df):len(train_df)+len(test_df)].copy()\n",
+    "X_original = full_data.iloc[len(train_df)+len(test_df):].copy()\n",
+    "\n",
+    "print(f'Features: {len(X.columns)}')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a0a03eef",
+   "metadata": {
+    "papermill": {
+     "duration": 0.00278,
+     "end_time": "2026-01-10T02:40:55.313943",
+     "exception": false,
+     "start_time": "2026-01-10T02:40:55.311163",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "### ridge cv"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "42927f59",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-10T02:40:55.321231Z",
+     "iopub.status.busy": "2026-01-10T02:40:55.320488Z",
+     "iopub.status.idle": "2026-01-10T02:40:56.800441Z",
+     "shell.execute_reply": "2026-01-10T02:40:56.799513Z"
+    },
+    "papermill": {
+     "duration": 1.485632,
+     "end_time": "2026-01-10T02:40:56.802266",
+     "exception": false,
+     "start_time": "2026-01-10T02:40:55.316634",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Label encoding complete\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Label encode categoricals for Ridge\n",
+    "label_encoders = {}\n",
+    "X_ridge = X.copy()\n",
+    "X_test_ridge = X_test.copy()\n",
+    "X_orig_ridge = X_original.copy()\n",
+    "\n",
+    "for col in CATS:\n",
+    "    le = LabelEncoder()\n",
+    "    combined = pd.concat([X_ridge[col], X_test_ridge[col], X_orig_ridge[col]]).astype(str)\n",
+    "    le.fit(combined)\n",
+    "    X_ridge[col] = le.transform(X_ridge[col].astype(str))\n",
+    "    X_test_ridge[col] = le.transform(X_test_ridge[col].astype(str))\n",
+    "    X_orig_ridge[col] = le.transform(X_orig_ridge[col].astype(str))\n",
+    "    label_encoders[col] = le\n",
+    "\n",
+    "print('Label encoding complete')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "defd1ce6",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-10T02:40:56.810519Z",
+     "iopub.status.busy": "2026-01-10T02:40:56.809450Z",
+     "iopub.status.idle": "2026-01-10T02:46:57.363461Z",
+     "shell.execute_reply": "2026-01-10T02:46:57.362479Z"
+    },
+    "papermill": {
+     "duration": 360.561691,
+     "end_time": "2026-01-10T02:46:57.367039",
+     "exception": false,
+     "start_time": "2026-01-10T02:40:56.805348",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Fold 1: RMSE=9.04860, alpha=0.3360\n",
+      "Fold 2: RMSE=9.15489, alpha=0.3360\n",
+      "Fold 3: RMSE=9.05561, alpha=0.3360\n",
+      "Fold 4: RMSE=9.05910, alpha=0.3360\n",
+      "Fold 5: RMSE=9.07870, alpha=0.3360\n",
+      "Fold 6: RMSE=9.08406, alpha=0.3360\n",
+      "Fold 7: RMSE=9.07419, alpha=0.6952\n",
+      "Fold 8: RMSE=9.05072, alpha=0.3360\n",
+      "Fold 9: RMSE=9.11179, alpha=0.3360\n",
+      "Fold 10: RMSE=9.06588, alpha=0.3360\n",
+      "\n",
+      "Ridge OOF RMSE: 9.07841\n"
+     ]
+    }
+   ],
+   "source": [
+    "N_SAMPLES_TRAIN = X_ridge.shape[0]\n",
+    "N_SAMPLES_TEST = X_test_ridge.shape[0]\n",
+    "kf = KFold(n_splits=FOLDS, shuffle=True, random_state=1003)\n",
+    "\n",
+    "oof_pred_lr = np.zeros(N_SAMPLES_TRAIN)\n",
+    "test_preds_lr = np.zeros((N_SAMPLES_TEST, FOLDS))\n",
+    "orig_preds_lr = np.zeros(X_orig_ridge.shape[0])\n",
+    "fold_rmse_lr = []\n",
+    "\n",
+    "for fold, (train_index, val_index) in enumerate(kf.split(X_ridge, y), start=1):\n",
+    "    X_train_fold = X_ridge.iloc[train_index]\n",
+    "    X_val = X_ridge.iloc[val_index]\n",
+    "    y_train_fold = y.iloc[train_index]\n",
+    "    y_val = y.iloc[val_index]\n",
+    "\n",
+    "    X_train_combined = pd.concat([X_train_fold, X_orig_ridge], axis=0)\n",
+    "    y_train_combined = pd.concat([y_train_fold, y_orig], axis=0)\n",
+    "\n",
+    "    alphas = np.logspace(-3, 3, 20)\n",
+    "    lr_model = RidgeCV(alphas=alphas, cv=5, scoring='neg_root_mean_squared_error')\n",
+    "    lr_model.fit(X_train_combined, y_train_combined.ravel())\n",
+    "\n",
+    "    lr_val_pred = np.clip(lr_model.predict(X_val), 0, 100)\n",
+    "    lr_test_pred = np.clip(lr_model.predict(X_test_ridge), 0, 100)\n",
+    "    lr_orig_pred = np.clip(lr_model.predict(X_orig_ridge), 0, 100)\n",
+    "\n",
+    "    oof_pred_lr[val_index] = lr_val_pred\n",
+    "    test_preds_lr[:, fold - 1] = lr_test_pred\n",
+    "    orig_preds_lr += lr_orig_pred / FOLDS\n",
+    "\n",
+    "    rmse_lr = root_mean_squared_error(y_val, lr_val_pred)\n",
+    "    fold_rmse_lr.append(rmse_lr)\n",
+    "    print(f'Fold {fold}: RMSE={rmse_lr:.5f}, alpha={lr_model.alpha_:.4f}')\n",
+    "\n",
+    "ridge_oof_rmse = root_mean_squared_error(y, oof_pred_lr)\n",
+    "print(f'\\nRidge OOF RMSE: {ridge_oof_rmse:.5f}')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "93e7145c",
+   "metadata": {
+    "papermill": {
+     "duration": 0.005183,
+     "end_time": "2026-01-10T02:46:57.377468",
+     "exception": false,
+     "start_time": "2026-01-10T02:46:57.372285",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "### xgboost "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "3b5c1657",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-10T02:46:57.389778Z",
+     "iopub.status.busy": "2026-01-10T02:46:57.389397Z",
+     "iopub.status.idle": "2026-01-10T02:47:00.356016Z",
+     "shell.execute_reply": "2026-01-10T02:47:00.354980Z"
+    },
+    "papermill": {
+     "duration": 2.975134,
+     "end_time": "2026-01-10T02:47:00.357990",
+     "exception": false,
+     "start_time": "2026-01-10T02:46:57.382856",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Added Ridge predictions as meta-feature\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Prepare data for XGBoost\n",
+    "full_data_xgb = pd.concat([X_raw, X_test_raw, X_orig_raw], axis=0)\n",
+    "\n",
+    "for col in base_features:\n",
+    "    full_data_xgb[col] = full_data_xgb[col].astype(str).astype('category')\n",
+    "\n",
+    "for col in numeric_cols:\n",
+    "    full_data_xgb[col] = full_data_xgb[col].astype(float)\n",
+    "\n",
+    "X_xgb = full_data_xgb.iloc[:len(train_df)].copy()\n",
+    "X_test_xgb = full_data_xgb.iloc[len(train_df):len(train_df)+len(test_df)].copy()\n",
+    "X_original_xgb = full_data_xgb.iloc[len(train_df)+len(test_df):].copy()\n",
+    "\n",
+    "# Add Ridge predictions as feature\n",
+    "X_xgb['feature_lr_pred'] = oof_pred_lr\n",
+    "X_test_xgb['feature_lr_pred'] = test_preds_lr.mean(axis=1)\n",
+    "X_original_xgb['feature_lr_pred'] = orig_preds_lr\n",
+    "\n",
+    "print('Added Ridge predictions as meta-feature')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "4104652d",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-10T02:47:00.366284Z",
+     "iopub.status.busy": "2026-01-10T02:47:00.365970Z",
+     "iopub.status.idle": "2026-01-10T03:51:15.708361Z",
+     "shell.execute_reply": "2026-01-10T03:51:15.707496Z"
+    },
+    "papermill": {
+     "duration": 3855.354376,
+     "end_time": "2026-01-10T03:51:15.715758",
+     "exception": false,
+     "start_time": "2026-01-10T02:47:00.361382",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Fold 1: RMSE=8.59299, best_iter=1598\n",
+      "Fold 2: RMSE=8.68052, best_iter=1995\n",
+      "Fold 3: RMSE=8.58612, best_iter=1635\n",
+      "Fold 4: RMSE=8.61823, best_iter=1577\n",
+      "Fold 5: RMSE=8.60815, best_iter=1809\n",
+      "Fold 6: RMSE=8.63416, best_iter=1603\n",
+      "Fold 7: RMSE=8.59915, best_iter=2028\n",
+      "Fold 8: RMSE=8.58186, best_iter=1902\n",
+      "Fold 9: RMSE=8.63543, best_iter=1839\n",
+      "Fold 10: RMSE=8.60976, best_iter=1676\n",
+      "\n",
+      "XGBoost OOF RMSE: 8.61468\n"
+     ]
+    }
+   ],
+   "source": [
+    "xgb_params = {\n",
+    "    'n_estimators': 15000,\n",
+    "    'learning_rate': 0.005,\n",
+    "    'max_depth': 9,\n",
+    "    'subsample': 0.75,\n",
+    "    'reg_lambda': 5,\n",
+    "    'reg_alpha': 0.1,\n",
+    "    'colsample_bytree': 0.5,\n",
+    "    'colsample_bynode': 0.6,\n",
+    "    'min_child_weight': 5,\n",
+    "    'tree_method': 'hist',\n",
+    "    'random_state': SEED,\n",
+    "    'early_stopping_rounds': 80,\n",
+    "    'eval_metric': 'rmse',\n",
+    "    'enable_categorical': True,\n",
+    "    'n_jobs': -1,\n",
+    "}\n",
+    "\n",
+    "test_predictions = []\n",
+    "oof_predictions = np.zeros(len(X_xgb))\n",
+    "\n",
+    "for fold, (train_index, val_index) in enumerate(kf.split(X_xgb, y), start=1):\n",
+    "    X_train_fold = X_xgb.iloc[train_index]\n",
+    "    X_val = X_xgb.iloc[val_index]\n",
+    "    y_train_fold = y.iloc[train_index]\n",
+    "    y_val = y.iloc[val_index]\n",
+    "    X_train_combined = pd.concat([X_train_fold, X_original_xgb], axis=0)\n",
+    "    y_train_combined = pd.concat([y_train_fold, y_orig], axis=0)\n",
+    "\n",
+    "    model = xgb.XGBRegressor(**xgb_params)\n",
+    "    model.fit(X_train_combined, y_train_combined, eval_set=[(X_val, y_val)], verbose=False)\n",
+    "\n",
+    "    val_preds = model.predict(X_val)\n",
+    "    oof_predictions[val_index] = val_preds\n",
+    "    test_predictions.append(model.predict(X_test_xgb))\n",
+    "\n",
+    "    rmse = np.sqrt(mean_squared_error(y_val, val_preds))\n",
+    "    print(f'Fold {fold}: RMSE={rmse:.5f}, best_iter={model.best_iteration}')\n",
+    "\n",
+    "xgb_oof_rmse = np.sqrt(mean_squared_error(y, oof_predictions))\n",
+    "print(f'\\nXGBoost OOF RMSE: {xgb_oof_rmse:.5f}')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "51a387a4",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-01-10T03:51:15.725029Z",
+     "iopub.status.busy": "2026-01-10T03:51:15.724713Z",
+     "iopub.status.idle": "2026-01-10T03:51:17.507928Z",
+     "shell.execute_reply": "2026-01-10T03:51:17.506855Z"
+    },
+    "papermill": {
+     "duration": 1.790414,
+     "end_time": "2026-01-10T03:51:17.510053",
+     "exception": false,
+     "start_time": "2026-01-10T03:51:15.719639",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "============================================================\n",
+      "FINAL RESULTS\n",
+      "============================================================\n",
+      "Ridge RMSE:   9.07841\n",
+      "XGBoost RMSE: 8.61468\n",
+      "\n",
+      "Submission saved!\n"
+     ]
+    },
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>id</th>\n",
+       "      <th>exam_score</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>630000</td>\n",
+       "      <td>68.896729</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>630001</td>\n",
+       "      <td>69.811279</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>630002</td>\n",
+       "      <td>89.531097</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>630003</td>\n",
+       "      <td>55.867249</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>630004</td>\n",
+       "      <td>46.158760</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "       id  exam_score\n",
+       "0  630000   68.896729\n",
+       "1  630001   69.811279\n",
+       "2  630002   89.531097\n",
+       "3  630003   55.867249\n",
+       "4  630004   46.158760"
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "print('='*60)\n",
+    "print('FINAL RESULTS')\n",
+    "print('='*60)\n",
+    "print(f'Ridge RMSE:   {ridge_oof_rmse:.5f}')\n",
+    "print(f'XGBoost RMSE: {xgb_oof_rmse:.5f}')\n",
+    "\n",
+    "# Save OOF\n",
+    "oof_df = pd.DataFrame({'id': train_df['id'], TARGET: oof_predictions})\n",
+    "oof_df.to_csv('xgb_ridge_oof.csv', index=False)\n",
+    "\n",
+    "# Save submission\n",
+    "final_preds = np.mean(test_predictions, axis=0)\n",
+    "final_preds = np.clip(final_preds, train_df[TARGET].min(), train_df[TARGET].max())\n",
+    "\n",
+    "submission = pd.DataFrame({'id': test_df['id'], TARGET: final_preds})\n",
+    "submission.to_csv('submission.csv', index=False)\n",
+    "\n",
+    "print('\\nSubmission saved!')\n",
+    "submission.head()\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a2a48d7f",
+   "metadata": {
+    "papermill": {
+     "duration": 0.003766,
+     "end_time": "2026-01-10T03:51:17.517743",
+     "exception": false,
+     "start_time": "2026-01-10T03:51:17.513977",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "### please upvote\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "b5bae9bc",
+   "metadata": {
+    "papermill": {
+     "duration": 0.003695,
+     "end_time": "2026-01-10T03:51:17.525205",
+     "exception": false,
+     "start_time": "2026-01-10T03:51:17.521510",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kaggle": {
+   "accelerator": "none",
+   "dataSources": [
+    {
+     "databundleVersionId": 14993753,
+     "sourceId": 119082,
+     "sourceType": "competition"
+    },
+    {
+     "datasetId": 8762382,
+     "sourceId": 13904981,
+     "sourceType": "datasetVersion"
+    }
+   ],
+   "dockerImageVersionId": 31239,
+   "isGpuEnabled": false,
+   "isInternetEnabled": true,
+   "language": "python",
+   "sourceType": "notebook"
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.12.12"
+  },
+  "papermill": {
+   "default_parameters": {},
+   "duration": 4233.485825,
+   "end_time": "2026-01-10T03:51:19.052849",
+   "environment_variables": {},
+   "exception": null,
+   "input_path": "__notebook__.ipynb",
+   "output_path": "__notebook__.ipynb",
+   "parameters": {},
+   "start_time": "2026-01-10T02:40:45.567024",
+   "version": "2.6.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
